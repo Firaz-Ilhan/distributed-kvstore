@@ -66,13 +66,15 @@ func (s *Store) Delete(key string, skipReplication bool) error {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	delete(s.data, key)
+	s.mu.Unlock()
+
 	if !skipReplication {
-		err := s.replicate("DELETE", key, "")
-		if err != nil {
-			return fmt.Errorf("failed to delete key with replication: %v", err)
-		}
+		go func() {
+			if err := s.replicate("DELETE", key, ""); err != nil {
+				log.Printf("Failed to replicate DELETE operation for key %s: %v", key, err)
+			}
+		}()
 	}
 	return nil
 }
@@ -171,7 +173,8 @@ func (h *handler) handlePut(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	key := strings.TrimSpace(r.URL.Path[1:])
-	err := h.store.Delete(key, false)
+	skipReplication := r.Header.Get("X-Replication") == "true"
+	err := h.store.Delete(key, skipReplication)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
