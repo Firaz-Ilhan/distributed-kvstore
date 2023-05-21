@@ -19,13 +19,27 @@ type Store struct {
 }
 
 func NewStore(nodes []string) *Store {
+	var validNodes []string
+	for _, node := range nodes {
+		if node != "" {
+			validNodes = append(validNodes, node)
+		}
+	}
 	return &Store{
 		data:  make(map[string]string),
-		nodes: nodes,
+		nodes: validNodes,
 	}
 }
 
 type MultiError []error
+
+func (me MultiError) Error() string {
+	errs := []string{}
+	for _, err := range me {
+		errs = append(errs, err.Error())
+	}
+	return strings.Join(errs, "; ")
+}
 
 func (s *Store) Get(key string) (string, bool) {
 	s.mu.RLock()
@@ -39,35 +53,28 @@ func (s *Store) Set(key string, value string, skipReplication bool) error {
 	defer s.mu.Unlock()
 	s.data[key] = value
 	if !skipReplication {
-		return s.replicate("PUT", key, value)
+		err := s.replicate("PUT", key, value)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (s *Store) Delete(key string, skipReplication bool) {
+func (s *Store) Delete(key string, skipReplication bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.data, key)
 	if !skipReplication {
-		s.replicate("DELETE", key, "")
-	}
-}
-
-func (m MultiError) Error() string {
-	if len(m) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-	for i, err := range m {
-		if i != 0 {
-			sb.WriteString("; ")
+		err := s.replicate("DELETE", key, "")
+		if err != nil {
+			return err
 		}
-		sb.WriteString(err.Error())
 	}
-	return sb.String()
+	return nil
 }
 
-func (s *Store) replicate(method string, key string, value string) error {
+func (s *Store) replicate(method string, key string, value string) MultiError {
 	var wg sync.WaitGroup
 	errs := make(chan error, len(s.nodes))
 
