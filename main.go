@@ -13,16 +13,20 @@ import (
 	"time"
 )
 
+const ReplicationHeader = "X-Replication"
+
 type Store struct {
-	mu    sync.RWMutex
-	data  map[string]string
-	nodes []string
+	mu     sync.RWMutex
+	data   map[string]string
+	nodes  []string
+	client *http.Client
 }
 
 func NewStore(nodes []string) *Store {
 	return &Store{
-		data:  make(map[string]string),
-		nodes: nodes,
+		data:   make(map[string]string),
+		nodes:  nodes,
+		client: &http.Client{Timeout: 2 * time.Second},
 	}
 }
 
@@ -83,10 +87,6 @@ func (s *Store) replicate(method, key, value string) error {
 	var wg sync.WaitGroup
 	errs := make(chan error, len(s.nodes))
 
-	client := &http.Client{
-		Timeout: 2 * time.Second,
-	}
-
 	for _, node := range s.nodes {
 		wg.Add(1)
 		go func(node string) {
@@ -99,9 +99,9 @@ func (s *Store) replicate(method, key, value string) error {
 				return
 			}
 
-			req.Header.Set("X-Replication", "true")
+			req.Header.Set(ReplicationHeader, "true")
 
-			resp, err := client.Do(req)
+			resp, err := s.client.Do(req)
 			if err != nil {
 				errs <- fmt.Errorf("failed to replicate to %s: %w", node, err)
 				return
