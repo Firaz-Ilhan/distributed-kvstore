@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -19,24 +20,18 @@ type Store struct {
 }
 
 func NewStore(nodes []string) *Store {
-	var validNodes []string
-	for _, node := range nodes {
-		if node != "" {
-			validNodes = append(validNodes, node)
-		}
-	}
 	return &Store{
 		data:  make(map[string]string),
-		nodes: validNodes,
+		nodes: nodes,
 	}
 }
 
 type MultiError []error
 
 func (me MultiError) Error() string {
-	errs := []string{}
-	for _, err := range me {
-		errs = append(errs, err.Error())
+	errs := make([]string, len(me))
+	for i, err := range me {
+		errs[i] = err.Error()
 	}
 	return strings.Join(errs, "; ")
 }
@@ -49,32 +44,40 @@ func (s *Store) Get(key string) (string, bool) {
 }
 
 func (s *Store) Set(key string, value string, skipReplication bool) error {
+	if key == "" || value == "" {
+		return errors.New("key or value cannot be empty")
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data[key] = value
 	if !skipReplication {
 		err := s.replicate("PUT", key, value)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to set value with replication: %v", err)
 		}
 	}
 	return nil
 }
 
 func (s *Store) Delete(key string, skipReplication bool) error {
+	if key == "" {
+		return errors.New("key cannot be empty")
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.data, key)
 	if !skipReplication {
 		err := s.replicate("DELETE", key, "")
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to delete key with replication: %v", err)
 		}
 	}
 	return nil
 }
 
-func (s *Store) replicate(method string, key string, value string) MultiError {
+func (s *Store) replicate(method, key, value string) error {
 	var wg sync.WaitGroup
 	errs := make(chan error, len(s.nodes))
 
@@ -116,15 +119,33 @@ func (s *Store) replicate(method string, key string, value string) MultiError {
 	for err := range errs {
 		multiErr = append(multiErr, err)
 	}
-	if len(multiErr) == 0 {
-		return nil
+
+	if len(multiErr) > 0 {
+		return multiErr
 	}
-	return multiErr
+	return nil
 }
 
-func handleGet(w http.ResponseWriter, r *http.Request, store *Store) {
-	key := r.URL.Path[1:]
-	value, ok := store.Get(key)
+type handler struct {
+	store *Store
+}
+
+func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.handleGet(w, r)
+	case http.MethodPut:
+		h.handlePut(w, r)
+	case http.MethodDelete:
+		h.handleDelete(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *handler) handleGet(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimSpace(r.URL.Path[1:])
+	value, ok := h.store.Get(key)
 	if !ok {
 		http.Error(w, "Not found", http.StatusNotFound)
 		return
@@ -132,27 +153,27 @@ func handleGet(w http.ResponseWriter, r *http.Request, store *Store) {
 	w.Write([]byte(value))
 }
 
-func handlePut(w http.ResponseWriter, r *http.Request, store *Store) {
-	key := r.URL.Path[1:]
+func (h *handler) handlePut(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimSpace(r.URL.Path[1:])
 	value, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	skipReplication := r.Header.Get("X-Replication") == "true"
-	err = store.Set(key, string(value), skipReplication)
+	err = h.store.Set(key, string(value), skipReplication)
 	if err != nil {
-		http.Error(w, "Failed to set value", http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
 }
 
-func handleDelete(w http.ResponseWriter, r *http.Request, store *Store) {
-	key := r.URL.Path[1:]
-	err := store.Delete(key, false)
+func (h *handler) handleDelete(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimSpace(r.URL.Path[1:])
+	err := h.store.Delete(key, false)
 	if err != nil {
-		http.Error(w, "Failed to delete key", http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -165,27 +186,13 @@ func main() {
 	flag.StringVar(&nodesStr, "nodes", "", "Comma-separated list of other nodes")
 	flag.Parse()
 
-	var validNodes []string
-	for _, node := range strings.Split(nodesStr, ",") {
-		if node != "" {
-			validNodes = append(validNodes, node)
-		}
+	store := NewStore(strings.Split(nodesStr, ","))
+
+	h := &handler{
+		store: store,
 	}
 
-	store := NewStore(validNodes)
-
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			handleGet(w, r, store)
-		case http.MethodPut:
-			handlePut(w, r, store)
-		case http.MethodDelete:
-			handleDelete(w, r, store)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	http.Handle("/", h)
 
 	log.Printf("Listening on port %d", port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
