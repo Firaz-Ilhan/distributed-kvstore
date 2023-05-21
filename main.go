@@ -101,10 +101,7 @@ func (s *Store) replicate(method string, key string, value string) MultiError {
 				errs <- fmt.Errorf("failed to replicate to %s: %w", node, err)
 				return
 			}
-
-			if resp != nil && resp.Body != nil {
-				defer resp.Body.Close()
-			}
+			defer resp.Body.Close()
 
 			if resp.StatusCode >= 400 {
 				errs <- fmt.Errorf("failed to replicate to %s: status code %d", node, resp.StatusCode)
@@ -153,7 +150,12 @@ func handlePut(w http.ResponseWriter, r *http.Request, store *Store) {
 
 func handleDelete(w http.ResponseWriter, r *http.Request, store *Store) {
 	key := r.URL.Path[1:]
-	store.Delete(key, false)
+	err := store.Delete(key, false)
+	if err != nil {
+		http.Error(w, "Failed to delete key", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func main() {
