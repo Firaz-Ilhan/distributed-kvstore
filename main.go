@@ -25,6 +25,8 @@ func NewStore(nodes []string) *Store {
 	}
 }
 
+type MultiError []error
+
 func (s *Store) Get(key string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -51,28 +53,69 @@ func (s *Store) Delete(key string, skipReplication bool) {
 	}
 }
 
+func (m MultiError) Error() string {
+	if len(m) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for i, err := range m {
+		if i != 0 {
+			sb.WriteString("; ")
+		}
+		sb.WriteString(err.Error())
+	}
+	return sb.String()
+}
+
 func (s *Store) replicate(method string, key string, value string) error {
 	var wg sync.WaitGroup
-	var err error
-	wg.Add(len(s.nodes))
+	errs := make(chan error, len(s.nodes))
+
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+	}
+
 	for _, node := range s.nodes {
+		wg.Add(1)
 		go func(node string) {
 			defer wg.Done()
+
 			url := fmt.Sprintf("http://%s/%s", node, key)
-			ctx, _ := context.WithTimeout(context.Background(), 2*time.Second)
-			req, _ := http.NewRequestWithContext(ctx, method, url, strings.NewReader(value))
-			req.Header.Set("X-Replication", "true")
-			resp, err := http.DefaultClient.Do(req)
+			req, err := http.NewRequestWithContext(context.Background(), method, url, strings.NewReader(value))
 			if err != nil {
-				log.Printf("Failed to replicate to %s: %v", node, err)
+				errs <- fmt.Errorf("failed to create request: %w", err)
+				return
 			}
+
+			req.Header.Set("X-Replication", "true")
+
+			resp, err := client.Do(req)
+			if err != nil {
+				errs <- fmt.Errorf("failed to replicate to %s: %w", node, err)
+				return
+			}
+
 			if resp != nil && resp.Body != nil {
 				defer resp.Body.Close()
 			}
+
+			if resp.StatusCode >= 400 {
+				errs <- fmt.Errorf("failed to replicate to %s: status code %d", node, resp.StatusCode)
+			}
 		}(node)
 	}
+
 	wg.Wait()
-	return err
+	close(errs)
+
+	var multiErr MultiError
+	for err := range errs {
+		multiErr = append(multiErr, err)
+	}
+	if len(multiErr) == 0 {
+		return nil
+	}
+	return multiErr
 }
 
 func handleGet(w http.ResponseWriter, r *http.Request, store *Store) {
