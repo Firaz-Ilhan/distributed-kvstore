@@ -53,8 +53,9 @@ func (s *Store) Set(key string, value string, skipReplication bool) error {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.data[key] = value
+	s.mu.Unlock()
+
 	if !skipReplication {
 		err := s.replicate("PUT", key, value)
 		if err != nil {
