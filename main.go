@@ -84,35 +84,38 @@ func (s *Store) Delete(key string, skipReplication bool) error {
 	return nil
 }
 
+func (s *Store) replicateNode(node, method, key, value string, errs chan<- error, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	url := fmt.Sprintf("http://%s/%s", node, key)
+	req, err := http.NewRequestWithContext(context.Background(), method, url, strings.NewReader(value))
+	if err != nil {
+		errs <- fmt.Errorf("failed to create request: %w", err)
+		return
+	}
+
+	req.Header.Set(ReplicationHeader, "true")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		errs <- fmt.Errorf("failed to replicate to %s: %w", node, err)
+		return
+	}
+
+	resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		errs <- fmt.Errorf("failed to replicate to %s: status code %d", node, resp.StatusCode)
+	}
+}
+
 func (s *Store) replicate(method, key, value string) error {
 	var wg sync.WaitGroup
 	errs := make(chan error, len(s.nodes))
 
 	for _, node := range s.nodes {
 		wg.Add(1)
-		go func(node string) {
-			defer wg.Done()
-
-			url := fmt.Sprintf("http://%s/%s", node, key)
-			req, err := http.NewRequestWithContext(context.Background(), method, url, strings.NewReader(value))
-			if err != nil {
-				errs <- fmt.Errorf("failed to create request: %w", err)
-				return
-			}
-
-			req.Header.Set(ReplicationHeader, "true")
-
-			resp, err := s.client.Do(req)
-			if err != nil {
-				errs <- fmt.Errorf("failed to replicate to %s: %w", node, err)
-				return
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode >= 400 {
-				errs <- fmt.Errorf("failed to replicate to %s: status code %d", node, resp.StatusCode)
-			}
-		}(node)
+		go s.replicateNode(node, method, key, value, errs, &wg)
 	}
 
 	wg.Wait()
