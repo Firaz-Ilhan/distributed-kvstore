@@ -189,6 +189,25 @@ func (h *handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Request: %s %s", r.Method, r.URL)
+		statusWriter := &statusResponseWriter{ResponseWriter: w}
+		next.ServeHTTP(statusWriter, r)
+		log.Printf("Response: %d", statusWriter.status)
+	})
+}
+
+type statusResponseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusResponseWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
 func main() {
 	var port int
 	var nodesStr string
@@ -202,7 +221,7 @@ func main() {
 		store: store,
 	}
 
-	http.Handle("/", h)
+	http.Handle("/", loggingMiddleware(h))
 
 	server := &http.Server{
 		Addr: fmt.Sprintf(":%d", port),
