@@ -1,0 +1,20 @@
+version: "3"
+
+services:
+  node1:
+    build: .
+    command: ./main -port 8080 -nodes node2:8081,node3:8082
+    ports:
+      - 8080:8080
+
+  node2:
+    build: .
+    command: ./main -port 8081 -nodes node1:8080,node3:8082
+    ports:
+      - 8081:8081
+
+  node3:
+    build: .
+    command: ./main -port 8082 -nodes node1:8080,node2:8081
+    ports:
+      - 8082:8082
