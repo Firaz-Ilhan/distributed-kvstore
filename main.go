@@ -59,13 +59,7 @@ func (s *Store) Set(key string, value string, skipReplication bool) error {
 	s.data[key] = value
 	s.mu.Unlock()
 
-	if !skipReplication {
-		err := s.replicate("PUT", key, value)
-		if err != nil {
-			return fmt.Errorf("failed to set value with replication: %v", err)
-		}
-	}
-	return nil
+	return s.handleReplication(skipReplication, "PUT", key, value)
 }
 
 func (s *Store) Delete(key string, skipReplication bool) error {
@@ -77,12 +71,16 @@ func (s *Store) Delete(key string, skipReplication bool) error {
 	delete(s.data, key)
 	s.mu.Unlock()
 
+	return s.handleReplication(skipReplication, "DELETE", key, "")
+}
+
+func (s *Store) handleReplication(skipReplication bool, method, key, value string) error {
 	if !skipReplication {
-		go func() {
-			if err := s.replicate("DELETE", key, ""); err != nil {
-				log.Printf("Failed to replicate DELETE operation for key %s: %v", key, err)
-			}
-		}()
+		err := s.replicate(method, key, value)
+		if err != nil {
+			log.Printf("Failed to replicate %s operation for key %s: %v", method, key, err)
+			return fmt.Errorf("failed to set value with replication: %v", err)
+		}
 	}
 	return nil
 }
