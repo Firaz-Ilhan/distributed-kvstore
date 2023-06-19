@@ -167,7 +167,7 @@ func (h *handler) handlePut(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	skipReplication := r.Header.Get("X-Replication") == "true"
+	skipReplication := r.Header.Get(ReplicationHeader) == "true"
 	err = h.store.Set(key, string(value), skipReplication)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -178,7 +178,7 @@ func (h *handler) handlePut(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	key := strings.TrimSpace(r.URL.Path[1:])
-	skipReplication := r.Header.Get("X-Replication") == "true"
+	skipReplication := r.Header.Get(ReplicationHeader) == "true"
 	err := h.store.Delete(key, skipReplication)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -218,6 +218,10 @@ func main() {
 	h := &handler{
 		store: store,
 	}
+
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "OK")
+	})
 
 	http.Handle("/", loggingMiddleware(h))
 
