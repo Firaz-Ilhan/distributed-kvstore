@@ -267,6 +267,51 @@ func (w *statusResponseWriter) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
+func (s *Store) HealthCheck() {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.performHealthCheck()
+	}
+}
+
+func (s *Store) performHealthCheck() {
+	var wg sync.WaitGroup
+	wg.Add(len(s.nodes))
+	for _, node := range s.nodes {
+		go s.checkNode(node, &wg)
+	}
+	wg.Wait()
+}
+
+func (s *Store) checkNode(node string, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	resp, err := s.client.Get(fmt.Sprintf("http://%s/health", node))
+	if err != nil || resp.StatusCode != 200 {
+		s.removeNode(node)
+		log.Printf("Node %s is down", node)
+	} else {
+		log.Printf("Node %s is up", node)
+	}
+}
+
+func (s *Store) removeNode(node string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	hash := s.hashStr(node)
+	delete(s.hashMap, hash)
+
+	for i, val := range s.ring {
+		if val == hash {
+			s.ring = append(s.ring[:i], s.ring[i+1:]...)
+			break
+		}
+	}
+}
+
 func main() {
 	var port int
 	var nodesStr string
@@ -277,6 +322,8 @@ func main() {
 	flag.Parse()
 
 	store := NewStore(strings.Split(nodesStr, ","), replicationFactor)
+
+	go store.HealthCheck()
 
 	h := &handler{
 		store: store,
