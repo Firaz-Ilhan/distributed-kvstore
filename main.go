@@ -5,11 +5,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,18 +21,58 @@ import (
 const ReplicationHeader = "X-Replication"
 
 type Store struct {
-	mu     sync.RWMutex
-	data   map[string]string
-	nodes  []string
-	client *http.Client
+	mu                sync.RWMutex
+	data              map[string]string
+	nodes             []string
+	client            *http.Client
+	hashMap           map[uint32]string
+	ring              HashRing
+	replicationFactor int
 }
 
-func NewStore(nodes []string) *Store {
-	return &Store{
-		data:   make(map[string]string),
-		nodes:  nodes,
-		client: &http.Client{Timeout: 2 * time.Second},
+type HashRing []uint32
+
+func (hr HashRing) Len() int {
+	return len(hr)
+}
+
+func (hr HashRing) Less(i, j int) bool {
+	return hr[i] < hr[j]
+}
+
+func (hr HashRing) Swap(i, j int) {
+	hr[i], hr[j] = hr[j], hr[i]
+}
+
+func NewStore(nodes []string, replicationFactor int) *Store {
+	s := &Store{
+		data:              make(map[string]string),
+		nodes:             nodes,
+		client:            &http.Client{Timeout: 2 * time.Second},
+		hashMap:           make(map[uint32]string),
+		ring:              HashRing{},
+		replicationFactor: replicationFactor,
 	}
+
+	s.generateHashRing()
+
+	return s
+}
+
+func (s *Store) generateHashRing() {
+	for _, node := range s.nodes {
+		hash := s.hashStr(node)
+		s.ring = append(s.ring, hash)
+		s.hashMap[hash] = node
+	}
+
+	sort.Sort(s.ring)
+}
+
+func (s *Store) hashStr(key string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	return h.Sum32()
 }
 
 type MultiError []error
@@ -112,9 +154,13 @@ func (s *Store) replicateNode(node, method, key, value string, errs chan<- error
 
 func (s *Store) replicate(method, key, value string) error {
 	var wg sync.WaitGroup
-	errs := make(chan error, len(s.nodes))
+	errs := make(chan error, 1)
 
-	for _, node := range s.nodes {
+	hash := s.hashStr(key)
+	idx := s.getRingIndex(hash)
+
+	for i := 0; i < s.replicationFactor; i++ {
+		node := s.hashMap[s.ring[(idx+i)%len(s.ring)]]
 		wg.Add(1)
 		go s.replicateNode(node, method, key, value, errs, &wg)
 	}
@@ -131,6 +177,21 @@ func (s *Store) replicate(method, key, value string) error {
 		return multiErr
 	}
 	return nil
+}
+
+func (s *Store) getRingIndex(hash uint32) int {
+	i := sort.Search(len(s.ring), func(i int) bool {
+		return s.ring[i] >= hash
+	})
+
+	if i < len(s.ring) {
+		if i == len(s.ring)-1 && s.ring[i] < hash {
+			return 0
+		}
+		return i
+	} else {
+		return 0
+	}
 }
 
 type handler struct {
@@ -209,11 +270,13 @@ func (w *statusResponseWriter) WriteHeader(status int) {
 func main() {
 	var port int
 	var nodesStr string
+	var replicationFactor int
 	flag.IntVar(&port, "port", 8080, "Port to listen on")
 	flag.StringVar(&nodesStr, "nodes", "", "Comma-separated list of other nodes")
+	flag.IntVar(&replicationFactor, "replicationFactor", 2, "Replication factor")
 	flag.Parse()
 
-	store := NewStore(strings.Split(nodesStr, ","))
+	store := NewStore(strings.Split(nodesStr, ","), replicationFactor)
 
 	h := &handler{
 		store: store,
