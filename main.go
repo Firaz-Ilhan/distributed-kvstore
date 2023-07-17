@@ -18,14 +18,22 @@ import (
 	"time"
 )
 
-const ReplicationHeader = "X-Replication"
+const (
+	ReplicationHeader  = "X-Replication"
+	VirtualNodesFactor = 100
+)
+
+type NodeMap struct {
+	Node          string
+	VirtualNodeID int
+}
 
 type Store struct {
 	mu                sync.RWMutex
 	data              map[string]string
 	nodes             []string
 	client            *http.Client
-	hashMap           map[uint32]string
+	hashMap           map[uint32]NodeMap
 	ring              HashRing
 	replicationFactor int
 }
@@ -49,7 +57,7 @@ func NewStore(nodes []string, replicationFactor int) *Store {
 		data:              make(map[string]string),
 		nodes:             nodes,
 		client:            &http.Client{Timeout: 2 * time.Second},
-		hashMap:           make(map[uint32]string),
+		hashMap:           make(map[uint32]NodeMap),
 		ring:              HashRing{},
 		replicationFactor: replicationFactor,
 	}
@@ -61,9 +69,15 @@ func NewStore(nodes []string, replicationFactor int) *Store {
 
 func (s *Store) generateHashRing() {
 	for _, node := range s.nodes {
-		hash := s.hashStr(node)
-		s.ring = append(s.ring, hash)
-		s.hashMap[hash] = node
+		for vn := 0; vn < VirtualNodesFactor; vn++ {
+			virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
+			hash := s.hashStr(virtualNodeKey)
+			s.ring = append(s.ring, hash)
+			s.hashMap[hash] = NodeMap{
+				Node:          node,
+				VirtualNodeID: vn,
+			}
+		}
 	}
 
 	sort.Sort(s.ring)
@@ -160,7 +174,8 @@ func (s *Store) replicate(method, key, value string) error {
 	idx := s.getRingIndex(hash)
 
 	for i := 0; i < s.replicationFactor; i++ {
-		node := s.hashMap[s.ring[(idx+i)%len(s.ring)]]
+		nodeMap := s.hashMap[s.ring[(idx+i)%len(s.ring)]]
+		node := nodeMap.Node
 		wg.Add(1)
 		go s.replicateNode(node, method, key, value, errs, &wg)
 	}
