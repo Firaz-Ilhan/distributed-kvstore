@@ -316,13 +316,16 @@ func (s *Store) removeNode(node string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	hash := s.hashStr(node)
-	delete(s.hashMap, hash)
+	for vn := 0; vn < VirtualNodesFactor; vn++ {
+		virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
+		hash := s.hashStr(virtualNodeKey)
+		delete(s.hashMap, hash)
 
-	for i, val := range s.ring {
-		if val == hash {
-			s.ring = append(s.ring[:i], s.ring[i+1:]...)
-			break
+		for i, val := range s.ring {
+			if val == hash {
+				s.ring = append(s.ring[:i], s.ring[i+1:]...)
+				break
+			}
 		}
 	}
 }
