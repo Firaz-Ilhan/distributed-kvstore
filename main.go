@@ -315,19 +315,23 @@ func (s *Store) checkNode(node string, wg *sync.WaitGroup) {
 func (s *Store) removeNode(node string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	removeHashes := make(map[uint32]struct{})
 
 	for vn := 0; vn < VirtualNodesFactor; vn++ {
 		virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
 		hash := s.hashStr(virtualNodeKey)
 		delete(s.hashMap, hash)
+		removeHashes[hash] = struct{}{}
+	}
 
-		for i, val := range s.ring {
-			if val == hash {
-				s.ring = append(s.ring[:i], s.ring[i+1:]...)
-				break
-			}
+	newRing := make(HashRing, 0, len(s.ring))
+	for _, hash := range s.ring {
+		if _, ok := removeHashes[hash]; !ok {
+			newRing = append(newRing, hash)
 		}
 	}
+
+	s.ring = newRing
 }
 
 func main() {
