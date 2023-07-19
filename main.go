@@ -168,7 +168,7 @@ func (s *Store) replicateNode(node, method, key, value string, errs chan<- error
 
 func (s *Store) replicate(method, key, value string) error {
 	var wg sync.WaitGroup
-	errs := make(chan error, 1)
+	errs := make(chan error, s.replicationFactor)
 
 	hash := s.hashStr(key)
 	idx := s.getRingIndex(hash)
