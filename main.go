@@ -5,51 +5,30 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/Firaz-Ilhan/distributed-kvstore/hashring"
 )
 
 const (
-	ReplicationHeader  = "X-Replication"
-	VirtualNodesFactor = 100
+	ReplicationHeader = "X-Replication"
 )
-
-type NodeMap struct {
-	Node          string
-	VirtualNodeID int
-}
 
 type Store struct {
 	mu                sync.RWMutex
 	data              map[string]string
 	nodes             []string
 	client            *http.Client
-	hashMap           map[uint32]NodeMap
-	ring              HashRing
+	ringManager       *hashring.HashRingManager
 	replicationFactor int
-}
-
-type HashRing []uint32
-
-func (hr HashRing) Len() int {
-	return len(hr)
-}
-
-func (hr HashRing) Less(i, j int) bool {
-	return hr[i] < hr[j]
-}
-
-func (hr HashRing) Swap(i, j int) {
-	hr[i], hr[j] = hr[j], hr[i]
 }
 
 func NewStore(nodes []string, replicationFactor int) *Store {
@@ -57,36 +36,10 @@ func NewStore(nodes []string, replicationFactor int) *Store {
 		data:              make(map[string]string),
 		nodes:             nodes,
 		client:            &http.Client{Timeout: 2 * time.Second},
-		hashMap:           make(map[uint32]NodeMap),
-		ring:              HashRing{},
+		ringManager:       hashring.NewHashRingManager(nodes),
 		replicationFactor: replicationFactor,
 	}
-
-	s.generateHashRing()
-
 	return s
-}
-
-func (s *Store) generateHashRing() {
-	for _, node := range s.nodes {
-		for vn := 0; vn < VirtualNodesFactor; vn++ {
-			virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
-			hash := s.hashStr(virtualNodeKey)
-			s.ring = append(s.ring, hash)
-			s.hashMap[hash] = NodeMap{
-				Node:          node,
-				VirtualNodeID: vn,
-			}
-		}
-	}
-
-	sort.Sort(s.ring)
-}
-
-func (s *Store) hashStr(key string) uint32 {
-	h := fnv.New32a()
-	h.Write([]byte(key))
-	return h.Sum32()
 }
 
 type MultiError []error
@@ -170,11 +123,11 @@ func (s *Store) replicate(method, key, value string) error {
 	var wg sync.WaitGroup
 	errs := make(chan error, s.replicationFactor)
 
-	hash := s.hashStr(key)
-	idx := s.getRingIndex(hash)
+	hash := s.ringManager.HashStr(key)
+	idx := s.ringManager.GetRingIndex(hash)
 
 	for i := 0; i < s.replicationFactor; i++ {
-		nodeMap := s.hashMap[s.ring[(idx+i)%len(s.ring)]]
+		nodeMap := s.ringManager.GetNodeMapForRingIndex((idx + i) % s.ringManager.Len())
 		node := nodeMap.Node
 		wg.Add(1)
 		go s.replicateNode(node, method, key, value, errs, &wg)
@@ -192,21 +145,6 @@ func (s *Store) replicate(method, key, value string) error {
 		return multiErr
 	}
 	return nil
-}
-
-func (s *Store) getRingIndex(hash uint32) int {
-	i := sort.Search(len(s.ring), func(i int) bool {
-		return s.ring[i] >= hash
-	})
-
-	if i < len(s.ring) {
-		if i == len(s.ring)-1 && s.ring[i] < hash {
-			return 0
-		}
-		return i
-	} else {
-		return 0
-	}
 }
 
 type handler struct {
@@ -305,33 +243,11 @@ func (s *Store) checkNode(node string, wg *sync.WaitGroup) {
 
 	resp, err := s.client.Get(fmt.Sprintf("http://%s/health", node))
 	if err != nil || resp.StatusCode != 200 {
-		s.removeNode(node)
+		s.ringManager.RemoveNode(node)
 		log.Printf("Node %s is down", node)
 	} else {
 		log.Printf("Node %s is up", node)
 	}
-}
-
-func (s *Store) removeNode(node string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	removeHashes := make(map[uint32]struct{})
-
-	for vn := 0; vn < VirtualNodesFactor; vn++ {
-		virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
-		hash := s.hashStr(virtualNodeKey)
-		delete(s.hashMap, hash)
-		removeHashes[hash] = struct{}{}
-	}
-
-	newRing := make(HashRing, 0, len(s.ring))
-	for _, hash := range s.ring {
-		if _, ok := removeHashes[hash]; !ok {
-			newRing = append(newRing, hash)
-		}
-	}
-
-	s.ring = newRing
 }
 
 func main() {
