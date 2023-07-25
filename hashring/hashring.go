@@ -50,6 +50,9 @@ func NewHashRingManager(nodes []string) *HashRingManager {
 }
 
 func (h *HashRingManager) generateHashRing() {
+	ringSize := len(h.nodes) * VirtualNodesFactor
+	h.ring = make(HashRing, 0, ringSize)
+
 	for _, node := range h.nodes {
 		for vn := 0; vn < VirtualNodesFactor; vn++ {
 			virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
