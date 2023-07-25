@@ -124,10 +124,16 @@ func (s *Store) replicate(method, key, value string) error {
 	errs := make(chan error, s.replicationFactor)
 
 	hash := s.ringManager.HashStr(key)
-	idx := s.ringManager.GetRingIndex(hash)
+	idx, err := s.ringManager.GetRingIndex(hash)
+	if err != nil {
+		return err
+	}
 
 	for i := 0; i < s.replicationFactor; i++ {
-		nodeMap := s.ringManager.GetNodeMapForRingIndex((idx + i) % s.ringManager.Len())
+		nodeMap, err := s.ringManager.GetNodeMapForRingIndex((idx + i) % s.ringManager.Len())
+		if err != nil {
+			return err
+		}
 		node := nodeMap.Node
 		wg.Add(1)
 		go s.replicateNode(node, method, key, value, errs, &wg)

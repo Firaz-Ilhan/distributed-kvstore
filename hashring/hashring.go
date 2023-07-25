@@ -74,18 +74,22 @@ func (h *HashRingManager) HashStr(key string) uint32 {
 	return hsh.Sum32()
 }
 
-func (h *HashRingManager) GetRingIndex(hash uint32) int {
+func (h *HashRingManager) GetRingIndex(hash uint32) (int, error) {
+	if len(h.ring) == 0 {
+		return 0, fmt.Errorf("ring is empty")
+	}
+
 	i := sort.Search(len(h.ring), func(i int) bool {
 		return h.ring[i] >= hash
 	})
 
 	if i < len(h.ring) {
 		if i == len(h.ring)-1 && h.ring[i] < hash {
-			return 0
+			return 0, nil
 		}
-		return i
+		return i, nil
 	} else {
-		return 0
+		return 0, fmt.Errorf("hash is out of range")
 	}
 }
 
@@ -113,9 +117,12 @@ func (h *HashRingManager) RemoveNode(node string) {
 	h.ring = newRing
 }
 
-func (h *HashRingManager) GetNodeMapForRingIndex(index int) NodeMap {
+func (h *HashRingManager) GetNodeMapForRingIndex(index int) (NodeMap, error) {
+	if index < 0 || index >= len(h.ring) {
+		return NodeMap{}, fmt.Errorf("index out of range")
+	}
 	hash := h.ring[index]
-	return h.hashMap[hash]
+	return h.hashMap[hash], nil
 }
 
 func (hr *HashRingManager) Len() int {
