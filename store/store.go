@@ -107,7 +107,10 @@ func (s *Store) replicateNode(node, method, key, value string, errs chan<- error
 		return
 	}
 
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		errs <- fmt.Errorf("failed to close response body from %s: %w", node, err)
+		return
+	}
 
 	if resp.StatusCode >= 400 {
 		errs <- fmt.Errorf("failed to replicate to %s: status code %d", node, resp.StatusCode)

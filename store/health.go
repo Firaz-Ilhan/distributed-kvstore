@@ -31,8 +31,10 @@ func (s *Store) checkNode(node string, wg *sync.WaitGroup) {
 	resp, err := s.client.Get(fmt.Sprintf("http://%s/health", node))
 	if err != nil || resp.StatusCode != 200 {
 		s.ringManager.RemoveNode(node)
-		log.Printf("Node %s is down", node)
+		log.Printf("Node %s is down: %v", node, err)
 	} else {
 		log.Printf("Node %s is up", node)
 	}
+
+	// TODO: re-add node if it's back up
 }
