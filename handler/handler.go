@@ -8,8 +8,14 @@ import (
 	"github.com/Firaz-Ilhan/distributed-kvstore/store"
 )
 
+type Storer interface {
+	Get(key string) (value string, ok bool)
+	Set(key, value string, skipReplication bool) error
+	Delete(key string, skipReplication bool) error
+}
+
 type Handler struct {
-	Store *store.Store
+	Store Storer
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
