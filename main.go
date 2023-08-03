@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -13,103 +12,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Firaz-Ilhan/distributed-kvstore/handler"
 	"github.com/Firaz-Ilhan/distributed-kvstore/store"
 )
-
-type handler struct {
-	store *store.Store
-}
-
-func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		h.handleGet(w, r)
-	case http.MethodPut:
-		h.handlePut(w, r)
-	case http.MethodDelete:
-		h.handleDelete(w, r)
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (h *handler) handleGet(w http.ResponseWriter, r *http.Request) {
-	key := strings.TrimSpace(r.URL.Path[1:])
-	value, ok := h.store.Get(key)
-	if !ok {
-		http.Error(w, "Not found", http.StatusNotFound)
-		return
-	}
-	w.Write([]byte(value))
-}
-
-func (h *handler) handlePut(w http.ResponseWriter, r *http.Request) {
-	key := strings.TrimSpace(r.URL.Path[1:])
-	value, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-	skipReplication := r.Header.Get(store.ReplicationHeader) == "true"
-	err = h.store.Set(key, string(value), skipReplication)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusCreated)
-}
-
-func (h *handler) handleDelete(w http.ResponseWriter, r *http.Request) {
-	key := strings.TrimSpace(r.URL.Path[1:])
-	skipReplication := r.Header.Get(store.ReplicationHeader) == "true"
-	err := h.store.Delete(key, skipReplication)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-}
-
-func loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		startTime := time.Now()
-		statusWriter := &statusResponseWriter{ResponseWriter: w}
-
-		defer func() {
-			log.Printf(
-				"Request: %s %s, Response: %d, Duration: %vms, User-Agent: %s, Response size: %d bytes",
-				r.Method,
-				r.URL,
-				statusWriter.status,
-				time.Since(startTime).Milliseconds(),
-				r.UserAgent(),
-				statusWriter.size,
-			)
-		}()
-
-		next.ServeHTTP(statusWriter, r)
-	})
-}
-
-type statusResponseWriter struct {
-	http.ResponseWriter
-	status int
-	size   int
-}
-
-func (w *statusResponseWriter) WriteHeader(status int) {
-	w.status = status
-	w.ResponseWriter.WriteHeader(status)
-}
-
-func (w *statusResponseWriter) Write(b []byte) (int, error) {
-	if w.status == 0 {
-		w.WriteHeader(http.StatusOK)
-	}
-	size, err := w.ResponseWriter.Write(b)
-	w.size += size
-	return size, err
-}
 
 func main() {
 	var port int
@@ -124,15 +29,15 @@ func main() {
 
 	go store.HealthCheck()
 
-	h := &handler{
-		store: store,
+	h := &handler.Handler{
+		Store: store,
 	}
 
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "OK")
 	})
 
-	http.Handle("/", loggingMiddleware(h))
+	http.Handle("/", handler.LoggingMiddleware(h))
 
 	server := &http.Server{
 		Addr: fmt.Sprintf(":%d", port),
