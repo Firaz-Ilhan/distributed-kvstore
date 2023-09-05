@@ -31,17 +31,23 @@ func (hr HashRing) Swap(i, j int) {
 }
 
 type HashRingManager struct {
-	hashMap map[uint32]NodeMap
-	ring    HashRing
-	nodes   []string
-	mutex   sync.Mutex
+	hashMap     map[uint32]NodeMap
+	ring        HashRing
+	nodes       []string
+	mutex       sync.RWMutex
+	activeNodes map[string]struct{}
 }
 
 func NewHashRingManager(nodes []string) *HashRingManager {
 	h := &HashRingManager{
-		hashMap: make(map[uint32]NodeMap),
-		ring:    HashRing{},
-		nodes:   nodes,
+		hashMap:     make(map[uint32]NodeMap),
+		ring:        HashRing{},
+		nodes:       nodes,
+		activeNodes: make(map[string]struct{}),
+	}
+
+	for _, node := range nodes {
+		h.activeNodes[node] = struct{}{}
 	}
 
 	h.generateHashRing()
@@ -50,10 +56,9 @@ func NewHashRingManager(nodes []string) *HashRingManager {
 }
 
 func (h *HashRingManager) generateHashRing() {
-	ringSize := len(h.nodes) * VirtualNodesFactor
-	h.ring = make(HashRing, 0, ringSize)
+	h.ring = make(HashRing, 0)
 
-	for _, node := range h.nodes {
+	for node := range h.activeNodes {
 		for vn := 0; vn < VirtualNodesFactor; vn++ {
 			virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
 			hash := h.HashStr(virtualNodeKey)
@@ -97,6 +102,7 @@ func (h *HashRingManager) RemoveNode(node string) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 
+	delete(h.activeNodes, node)
 	removeHashes := make(map[uint32]struct{})
 
 	for vn := 0; vn < VirtualNodesFactor; vn++ {
@@ -121,6 +127,8 @@ func (h *HashRingManager) AddNode(node string) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 
+	h.activeNodes[node] = struct{}{}
+
 	for vn := 0; vn < VirtualNodesFactor; vn++ {
 		virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
 		hash := h.HashStr(virtualNodeKey)
@@ -135,6 +143,9 @@ func (h *HashRingManager) AddNode(node string) {
 }
 
 func (h *HashRingManager) GetNodeMapForRingIndex(index int) (NodeMap, error) {
+	h.mutex.RLock()
+	defer h.mutex.RUnlock()
+
 	if index < 0 || index >= len(h.ring) {
 		return NodeMap{}, fmt.Errorf("index out of range")
 	}
@@ -142,18 +153,16 @@ func (h *HashRingManager) GetNodeMapForRingIndex(index int) (NodeMap, error) {
 	return h.hashMap[hash], nil
 }
 
-func (hr *HashRingManager) Len() int {
-	return len(hr.ring)
+func (h *HashRingManager) Len() int {
+	h.mutex.RLock()
+	defer h.mutex.RUnlock()
+	return len(h.ring)
 }
 
 func (h *HashRingManager) HasNode(node string) bool {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
+	h.mutex.RLock()
+	defer h.mutex.RUnlock()
 
-	for _, hash := range h.ring {
-		if h.hashMap[hash].Node == node {
-			return true
-		}
-	}
-	return false
+	_, exists := h.activeNodes[node]
+	return exists
 }
