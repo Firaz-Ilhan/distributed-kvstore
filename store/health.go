@@ -33,8 +33,11 @@ func (s *Store) checkNode(node string, wg *sync.WaitGroup) {
 		s.ringManager.RemoveNode(node)
 		log.Printf("Node %s is down: %v", node, err)
 	} else {
-		log.Printf("Node %s is up", node)
+		if !s.ringManager.HasNode(node) {
+			s.ringManager.AddNode(node)
+			log.Printf("Node %s has recovered and is added again", node)
+		} else {
+			log.Printf("Node %s is up", node)
+		}
 	}
-
-	// TODO: re-add node if it's back up
 }

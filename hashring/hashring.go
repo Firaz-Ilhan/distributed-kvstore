@@ -117,6 +117,23 @@ func (h *HashRingManager) RemoveNode(node string) {
 	h.ring = newRing
 }
 
+func (h *HashRingManager) AddNode(node string) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	for vn := 0; vn < VirtualNodesFactor; vn++ {
+		virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
+		hash := h.HashStr(virtualNodeKey)
+		h.ring = append(h.ring, hash)
+		h.hashMap[hash] = NodeMap{
+			Node:          node,
+			VirtualNodeID: vn,
+		}
+	}
+
+	sort.Sort(h.ring)
+}
+
 func (h *HashRingManager) GetNodeMapForRingIndex(index int) (NodeMap, error) {
 	if index < 0 || index >= len(h.ring) {
 		return NodeMap{}, fmt.Errorf("index out of range")
@@ -127,4 +144,16 @@ func (h *HashRingManager) GetNodeMapForRingIndex(index int) (NodeMap, error) {
 
 func (hr *HashRingManager) Len() int {
 	return len(hr.ring)
+}
+
+func (h *HashRingManager) HasNode(node string) bool {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	for _, hash := range h.ring {
+		if h.hashMap[hash].Node == node {
+			return true
+		}
+	}
+	return false
 }
