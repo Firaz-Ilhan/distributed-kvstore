@@ -24,6 +24,8 @@ type Store struct {
 	client            *http.Client
 	ringManager       *hashring.HashRingManager
 	replicationFactor int
+	readQuorum        int
+	writeQuorum       int
 }
 
 type MultiError []error
@@ -37,12 +39,15 @@ func (me MultiError) Error() string {
 }
 
 func NewStore(nodes []string, replicationFactor int) *Store {
+	halfNodes := len(nodes) / 2
 	s := &Store{
 		data:              make(map[string]string),
 		nodes:             nodes,
 		client:            &http.Client{Timeout: 2 * time.Second},
 		ringManager:       hashring.NewHashRingManager(nodes),
 		replicationFactor: replicationFactor,
+		readQuorum:        halfNodes + 1,
+		writeQuorum:       halfNodes + 1,
 	}
 	return s
 }
@@ -89,9 +94,7 @@ func (s *Store) handleReplication(skipReplication bool, method, key, value strin
 	return nil
 }
 
-func (s *Store) replicateNode(node, method, key, value string, errs chan<- error, wg *sync.WaitGroup) {
-	defer wg.Done()
-
+func (s *Store) replicateNode(node, method, key, value string, errs chan<- error) {
 	url := fmt.Sprintf("http://%s/%s", node, key)
 	req, err := http.NewRequestWithContext(context.Background(), method, url, strings.NewReader(value))
 	if err != nil {
@@ -106,20 +109,19 @@ func (s *Store) replicateNode(node, method, key, value string, errs chan<- error
 		errs <- fmt.Errorf("failed to replicate to %s: %w", node, err)
 		return
 	}
-
-	if err := resp.Body.Close(); err != nil {
-		errs <- fmt.Errorf("failed to close response body from %s: %w", node, err)
-		return
-	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
 		errs <- fmt.Errorf("failed to replicate to %s: status code %d", node, resp.StatusCode)
+		return
 	}
+
+	errs <- nil
 }
 
 func (s *Store) replicate(method, key, value string) error {
-	var wg sync.WaitGroup
 	errs := make(chan error, s.replicationFactor)
+	var wg sync.WaitGroup
 
 	hash := s.ringManager.HashStr(key)
 	idx, err := s.ringManager.GetRingIndex(hash)
@@ -134,17 +136,30 @@ func (s *Store) replicate(method, key, value string) error {
 		}
 		node := nodeMap.Node
 		wg.Add(1)
-		go s.replicateNode(node, method, key, value, errs, &wg)
+		go func(node string) {
+			defer wg.Done()
+			s.replicateNode(node, method, key, value, errs)
+		}(node)
 	}
 
-	wg.Wait()
-	close(errs)
+	go func() {
+		wg.Wait()
+		close(errs)
+	}()
 
 	var multiErr MultiError
+	successCount := 0
 	for err := range errs {
-		multiErr = append(multiErr, err)
+		if err == nil {
+			successCount++
+		} else {
+			multiErr = append(multiErr, err)
+		}
 	}
 
+	if successCount < s.writeQuorum {
+		return fmt.Errorf("not enough replicas for write quorum: %d", successCount)
+	}
 	if len(multiErr) > 0 {
 		return multiErr
 	}
