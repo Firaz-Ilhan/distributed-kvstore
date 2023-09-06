@@ -103,24 +103,17 @@ func (h *HashRingManager) RemoveNode(node string) {
 	defer h.mutex.Unlock()
 
 	delete(h.activeNodes, node)
-	removeHashes := make(map[uint32]struct{})
 
 	for vn := 0; vn < VirtualNodesFactor; vn++ {
 		virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
 		hash := h.HashStr(virtualNodeKey)
-		delete(h.hashMap, hash)
-		removeHashes[hash] = struct{}{}
-	}
+		position := sort.Search(len(h.ring), func(i int) bool { return h.ring[i] >= hash })
 
-	newRing := make(HashRing, 0, len(h.ring))
-
-	for _, hash := range h.ring {
-		if _, ok := removeHashes[hash]; !ok {
-			newRing = append(newRing, hash)
+		if position < len(h.ring) && h.ring[position] == hash {
+			h.ring = append(h.ring[:position], h.ring[position+1:]...)
+			delete(h.hashMap, hash)
 		}
 	}
-
-	h.ring = newRing
 }
 
 func (h *HashRingManager) AddNode(node string) {
@@ -132,14 +125,15 @@ func (h *HashRingManager) AddNode(node string) {
 	for vn := 0; vn < VirtualNodesFactor; vn++ {
 		virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
 		hash := h.HashStr(virtualNodeKey)
-		h.ring = append(h.ring, hash)
+		position := sort.Search(len(h.ring), func(i int) bool { return h.ring[i] >= hash })
+		h.ring = append(h.ring, 0)
+		copy(h.ring[position+1:], h.ring[position:])
+		h.ring[position] = hash
 		h.hashMap[hash] = NodeMap{
 			Node:          node,
 			VirtualNodeID: vn,
 		}
 	}
-
-	sort.Sort(h.ring)
 }
 
 func (h *HashRingManager) GetNodeMapForRingIndex(index int) (NodeMap, error) {
