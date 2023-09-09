@@ -4,6 +4,13 @@ import (
 	"testing"
 )
 
+func assertEqual(t *testing.T, got, want interface{}, msg string) {
+	t.Helper()
+	if got != want {
+		t.Errorf("%s: got %v, want %v", msg, got, want)
+	}
+}
+
 func TestGet(t *testing.T) {
 	t.Run("should get correct value for existing key", func(t *testing.T) {
 		s := NewStore([]string{"node1", "node2", "node3"}, 1)
@@ -11,12 +18,8 @@ func TestGet(t *testing.T) {
 		_ = s.Set("key", "value", true)
 
 		value, ok := s.Get("key")
-		if !ok {
-			t.Fatalf("expected key to exist")
-		}
-		if value != "value" {
-			t.Fatalf("expected value to be 'value', got %s", value)
-		}
+		assertEqual(t, ok, true, "key existence check")
+		assertEqual(t, value, "value", "retrieved value")
 	})
 }
 
@@ -41,7 +44,40 @@ func TestDelete(t *testing.T) {
 
 		err := s.Delete("", true)
 		if err == nil || err.Error() != "key cannot be empty" {
-			t.Fatalf("expected an error with message 'key cannot be empty', got %v", err)
+			t.Fatalf("expected an error with the message 'key cannot be empty', got %v", err)
+		}
+	})
+}
+
+func TestSet(t *testing.T) {
+	t.Run("should set key-value", func(t *testing.T) {
+		s := NewStore([]string{"node1", "node2", "node3"}, 1)
+
+		err := s.Set("key", "value", true)
+		if err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+
+		value, ok := s.Get("key")
+		assertEqual(t, ok, true, "key existence check after set")
+		assertEqual(t, value, "value", "retrieved value after set")
+	})
+
+	t.Run("should not accept empty key", func(t *testing.T) {
+		s := NewStore([]string{"node1", "node2", "node3"}, 1)
+
+		err := s.Set("", "value", true)
+		if err == nil || err.Error() != "key or value cannot be empty" {
+			t.Errorf("expected an error with message 'key or value cannot be empty', got %v", err)
+		}
+	})
+
+	t.Run("should not accept empty value", func(t *testing.T) {
+		s := NewStore([]string{"node1", "node2", "node3"}, 1)
+
+		err := s.Set("key", "", true)
+		if err == nil || err.Error() != "key or value cannot be empty" {
+			t.Errorf("expected an error with message 'key or value cannot be empty', got %v", err)
 		}
 	})
 }
