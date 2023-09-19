@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -61,7 +62,14 @@ func TestHandler_ServeHTTP(t *testing.T) {
 	req, rr = setupRequestAndRecorder(http.MethodGet, "/test", "")
 	h.ServeHTTP(rr, req)
 	assertStatusCode(t, rr.Code, http.StatusOK)
-	assertResponseBody(t, rr.Body.String(), "value")
+
+	var response map[string]string
+	err := json.Unmarshal(rr.Body.Bytes(), &response)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	assertResponseBody(t, response["value"], "value")
 
 	req, rr = setupRequestAndRecorder(http.MethodDelete, "/test", "")
 	h.ServeHTTP(rr, req)
@@ -70,6 +78,14 @@ func TestHandler_ServeHTTP(t *testing.T) {
 	req, rr = setupRequestAndRecorder(http.MethodGet, "/test", "")
 	h.ServeHTTP(rr, req)
 	assertStatusCode(t, rr.Code, http.StatusNotFound)
+
+	var errorResponse ErrorResponse
+	err = json.Unmarshal(rr.Body.Bytes(), &errorResponse)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal error response: %v", err)
+	}
+
+	assertResponseBody(t, errorResponse.Error, "Not found")
 
 	// Test unsupported method
 	req, rr = setupRequestAndRecorder(http.MethodPost, "/test", "data")
