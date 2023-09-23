@@ -49,8 +49,16 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"value": value})
+
+	var parsedValue interface{}
+	err := json.Unmarshal([]byte(value), &parsedValue)
+	if err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"value": parsedValue})
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"value": value})
+	}
 }
 
 func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) {
@@ -63,8 +71,10 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+
+	trimmedValue := strings.TrimSpace(string(value))
 	skipReplication := r.Header.Get(store.ReplicationHeader) == "true"
-	err = h.Store.Set(key, string(value), skipReplication)
+	err = h.Store.Set(key, trimmedValue, skipReplication)
 	if err != nil {
 		writeJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
