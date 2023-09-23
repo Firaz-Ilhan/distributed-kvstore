@@ -40,14 +40,23 @@ func (me MultiError) Error() string {
 
 func NewStore(nodes []string, replicationFactor int) *Store {
 	halfNodes := len(nodes) / 2
+	readQuorum := halfNodes + 1
+	writeQuorum := halfNodes + 1
+
+	if len(nodes) == 1 {
+		readQuorum = 1
+		writeQuorum = 1
+		replicationFactor = 0
+	}
+
 	s := &Store{
 		data:              make(map[string]string),
 		nodes:             nodes,
 		client:            &http.Client{Timeout: 2 * time.Second},
 		ringManager:       hashring.NewHashRingManager(nodes),
 		replicationFactor: replicationFactor,
-		readQuorum:        halfNodes + 1,
-		writeQuorum:       halfNodes + 1,
+		readQuorum:        readQuorum,
+		writeQuorum:       writeQuorum,
 	}
 	return s
 }
@@ -120,6 +129,10 @@ func (s *Store) replicateNode(node, method, key, value string, errs chan<- error
 }
 
 func (s *Store) replicate(method, key, value string) error {
+	if s.replicationFactor == 0 {
+		return nil
+	}
+
 	errs := make(chan error, s.replicationFactor)
 	var wg sync.WaitGroup
 
