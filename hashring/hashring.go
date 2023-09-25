@@ -107,7 +107,9 @@ func (h *HashRingManager) RemoveNode(node string) {
 	for vn := 0; vn < VirtualNodesFactor; vn++ {
 		virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
 		hash := h.HashStr(virtualNodeKey)
-		position := sort.Search(len(h.ring), func(i int) bool { return h.ring[i] >= hash })
+		position := sort.Search(len(h.ring), func(i int) bool {
+			return h.ring[i] >= hash
+		})
 
 		if position < len(h.ring) && h.ring[position] == hash {
 			h.ring = append(h.ring[:position], h.ring[position+1:]...)
@@ -122,18 +124,48 @@ func (h *HashRingManager) AddNode(node string) {
 
 	h.activeNodes[node] = struct{}{}
 
+	hashesToAdd := make([]uint32, 0, VirtualNodesFactor)
+	positionsToAdd := make([]int, 0, VirtualNodesFactor)
+
 	for vn := 0; vn < VirtualNodesFactor; vn++ {
 		virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
 		hash := h.HashStr(virtualNodeKey)
-		position := sort.Search(len(h.ring), func(i int) bool { return h.ring[i] >= hash })
-		h.ring = append(h.ring, 0)
-		copy(h.ring[position+1:], h.ring[position:])
-		h.ring[position] = hash
+		position := sort.Search(len(h.ring), func(i int) bool {
+			return h.ring[i] >= hash
+		})
+		hashesToAdd = append(hashesToAdd, hash)
+		positionsToAdd = append(positionsToAdd, position)
+	}
+
+	newRingSize := len(h.ring) + VirtualNodesFactor
+	newRing := make([]uint32, newRingSize)
+	currentIndex := 0
+
+	for i, hash := range h.ring {
+		for len(positionsToAdd) > 0 && i == positionsToAdd[0] {
+			newRing[currentIndex] = hashesToAdd[0]
+			h.hashMap[hashesToAdd[0]] = NodeMap{
+				Node:          node,
+				VirtualNodeID: currentIndex % VirtualNodesFactor,
+			}
+			currentIndex++
+			positionsToAdd = positionsToAdd[1:]
+			hashesToAdd = hashesToAdd[1:]
+		}
+		newRing[currentIndex] = hash
+		currentIndex++
+	}
+
+	for _, hash := range hashesToAdd {
+		newRing[currentIndex] = hash
 		h.hashMap[hash] = NodeMap{
 			Node:          node,
-			VirtualNodeID: vn,
+			VirtualNodeID: currentIndex % VirtualNodesFactor,
 		}
+		currentIndex++
 	}
+
+	h.ring = newRing
 }
 
 func (h *HashRingManager) GetNodeMapForRingIndex(index int) (NodeMap, error) {
