@@ -38,6 +38,11 @@ func (me MultiError) Error() string {
 	return strings.Join(errs, "; ")
 }
 
+/*
+Initializes and returns a new Store instance. It sets the
+read and write quorums based on the number of nodes,
+and initializes the hashing ring for the nodes.
+*/
 func NewStore(nodes []string, replicationFactor int) *Store {
 	halfNodes := len(nodes) / 2
 	readQuorum := halfNodes + 1
@@ -61,6 +66,10 @@ func NewStore(nodes []string, replicationFactor int) *Store {
 	return s
 }
 
+/*
+Get retrieves a value from the store based on the provided key. It returns
+the value and a boolean indicating if the key was found in the store.
+*/
 func (s *Store) Get(key string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -68,6 +77,11 @@ func (s *Store) Get(key string) (string, bool) {
 	return val, ok
 }
 
+/*
+Adds or updates a key-value pair in the store. If skipReplication is false, it will
+attempt to replicate the operation to other nodes in the distributed system.
+It will return an error if there's a problem with the operation or the replication.
+*/
 func (s *Store) Set(key string, value string, skipReplication bool) error {
 	if key == "" || value == "" {
 		return errors.New("key or value cannot be empty")
@@ -80,6 +94,11 @@ func (s *Store) Set(key string, value string, skipReplication bool) error {
 	return s.handleReplication(skipReplication, "PUT", key, value)
 }
 
+/*
+Removes a key from the store. If skipReplication is false, it will
+attempt to replicate the delete operation to other nodes in the distributed system.
+It will return an error if there's a problem with the operation or the replication.
+*/
 func (s *Store) Delete(key string, skipReplication bool) error {
 	if key == "" {
 		return errors.New("key cannot be empty")
@@ -103,6 +122,9 @@ func (s *Store) handleReplication(skipReplication bool, method, key, value strin
 	return nil
 }
 
+/*
+replicates a given operation for a specific key-value pair to a given node.
+*/
 func (s *Store) replicateNode(node, method, key, value string, errs chan<- error) {
 	url := fmt.Sprintf("http://%s/%s", node, key)
 	req, err := http.NewRequestWithContext(context.Background(), method, url, strings.NewReader(value))
@@ -128,6 +150,10 @@ func (s *Store) replicateNode(node, method, key, value string, errs chan<- error
 	errs <- nil
 }
 
+/*
+handles the replication of a given operation for a specific
+key-value pair across the distributed nodes based on the replication factor.
+*/
 func (s *Store) replicate(method, key, value string) error {
 	if s.replicationFactor == 0 {
 		return nil

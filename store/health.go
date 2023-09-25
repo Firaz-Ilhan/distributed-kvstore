@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+/*
+Periodically checks the health of nodes.
+*/
 func (s *Store) HealthCheck() {
 	ticker := time.NewTicker(300 * time.Second)
 	defer ticker.Stop()
@@ -16,6 +19,10 @@ func (s *Store) HealthCheck() {
 	}
 }
 
+/*
+Initiates health checks for each node in the store.
+It creates separate goroutines for each node to check its health in parallel.
+*/
 func (s *Store) performHealthCheck() {
 	var wg sync.WaitGroup
 	wg.Add(len(s.nodes))
@@ -25,6 +32,9 @@ func (s *Store) performHealthCheck() {
 	wg.Wait()
 }
 
+/*
+Sends a health check request to a specified node.
+*/
 func (s *Store) checkNode(node string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
