@@ -104,18 +104,23 @@ func (h *HashRingManager) RemoveNode(node string) {
 
 	delete(h.activeNodes, node)
 
+	hashesToRemove := make(map[uint32]struct{})
 	for vn := 0; vn < VirtualNodesFactor; vn++ {
 		virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
 		hash := h.HashStr(virtualNodeKey)
-		position := sort.Search(len(h.ring), func(i int) bool {
-			return h.ring[i] >= hash
-		})
+		hashesToRemove[hash] = struct{}{}
+	}
 
-		if position < len(h.ring) && h.ring[position] == hash {
-			h.ring = append(h.ring[:position], h.ring[position+1:]...)
+	newRing := make(HashRing, 0, len(h.ring)-VirtualNodesFactor)
+	for _, hash := range h.ring {
+		if _, toRemove := hashesToRemove[hash]; !toRemove {
+			newRing = append(newRing, hash)
+		} else {
 			delete(h.hashMap, hash)
 		}
 	}
+
+	h.ring = newRing
 }
 
 func (h *HashRingManager) AddNode(node string) {
@@ -124,48 +129,22 @@ func (h *HashRingManager) AddNode(node string) {
 
 	h.activeNodes[node] = struct{}{}
 
-	hashesToAdd := make([]uint32, 0, VirtualNodesFactor)
-	positionsToAdd := make([]int, 0, VirtualNodesFactor)
-
 	for vn := 0; vn < VirtualNodesFactor; vn++ {
 		virtualNodeKey := fmt.Sprintf("%s#%d", node, vn)
 		hash := h.HashStr(virtualNodeKey)
 		position := sort.Search(len(h.ring), func(i int) bool {
 			return h.ring[i] >= hash
 		})
-		hashesToAdd = append(hashesToAdd, hash)
-		positionsToAdd = append(positionsToAdd, position)
-	}
 
-	newRingSize := len(h.ring) + VirtualNodesFactor
-	newRing := make([]uint32, newRingSize)
-	currentIndex := 0
+		h.ring = append(h.ring, 0)
+		copy(h.ring[position+1:], h.ring[position:])
+		h.ring[position] = hash
 
-	for i, hash := range h.ring {
-		for len(positionsToAdd) > 0 && i == positionsToAdd[0] {
-			newRing[currentIndex] = hashesToAdd[0]
-			h.hashMap[hashesToAdd[0]] = NodeMap{
-				Node:          node,
-				VirtualNodeID: currentIndex % VirtualNodesFactor,
-			}
-			currentIndex++
-			positionsToAdd = positionsToAdd[1:]
-			hashesToAdd = hashesToAdd[1:]
-		}
-		newRing[currentIndex] = hash
-		currentIndex++
-	}
-
-	for _, hash := range hashesToAdd {
-		newRing[currentIndex] = hash
 		h.hashMap[hash] = NodeMap{
 			Node:          node,
-			VirtualNodeID: currentIndex % VirtualNodesFactor,
+			VirtualNodeID: vn,
 		}
-		currentIndex++
 	}
-
-	h.ring = newRing
 }
 
 func (h *HashRingManager) GetNodeMapForRingIndex(index int) (NodeMap, error) {
