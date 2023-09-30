@@ -1,3 +1,7 @@
+/*
+Implements a consistent hashing mechanism. It provides functionality to manage a ring
+of hashed values both from actual nodes and virtual nodes.
+*/
 package hashring
 
 import (
@@ -79,6 +83,10 @@ func (h *HashRingManager) HashStr(key string) uint32 {
 	return hsh.Sum32()
 }
 
+/*
+Finds a matching node for the given hash.
+It returns the first node that can accommodate the hash.
+*/
 func (h *HashRingManager) GetRingIndex(hash uint32) (int, error) {
 	if len(h.ring) == 0 {
 		return 0, fmt.Errorf("ring is empty")
@@ -98,6 +106,9 @@ func (h *HashRingManager) GetRingIndex(hash uint32) (int, error) {
 	}
 }
 
+/*
+Gracefully ejects a node as well as their associated virtual nodes.
+*/
 func (h *HashRingManager) RemoveNode(node string) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
@@ -123,6 +134,9 @@ func (h *HashRingManager) RemoveNode(node string) {
 	h.ring = newRing
 }
 
+/*
+Adds a new node and its associated virtual nodes to the hash ring.
+*/
 func (h *HashRingManager) AddNode(node string) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
@@ -147,6 +161,9 @@ func (h *HashRingManager) AddNode(node string) {
 	}
 }
 
+/*
+Retrieves the node and virtual node ID for the given index in the hash ring.
+*/
 func (h *HashRingManager) GetNodeMapForRingIndex(index int) (NodeMap, error) {
 	h.mutex.RLock()
 	defer h.mutex.RUnlock()
@@ -164,6 +181,9 @@ func (h *HashRingManager) Len() int {
 	return len(h.ring)
 }
 
+/*
+Checks if the specified node is present in the active nodes list.
+*/
 func (h *HashRingManager) HasNode(node string) bool {
 	h.mutex.RLock()
 	defer h.mutex.RUnlock()
