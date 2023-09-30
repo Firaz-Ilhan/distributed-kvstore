@@ -168,17 +168,26 @@ func (s *Store) replicate(method, key, value string) error {
 		return err
 	}
 
-	for i := 0; i < s.replicationFactor; i++ {
+	selectedNodes := make(map[string]struct{})
+	for i := 0; i < s.replicationFactor; {
 		nodeMap, err := s.ringManager.GetNodeMapForRingIndex((idx + i) % s.ringManager.Len())
 		if err != nil {
 			return err
 		}
 		node := nodeMap.Node
-		wg.Add(1)
-		go func(node string) {
-			defer wg.Done()
-			s.replicateNode(node, method, key, value, errs)
-		}(node)
+
+		if _, alreadySelected := selectedNodes[node]; !alreadySelected {
+			fmt.Printf("Replicating to: %s\n", node)
+			selectedNodes[node] = struct{}{}
+			wg.Add(1)
+			go func(node string) {
+				defer wg.Done()
+				s.replicateNode(node, method, key, value, errs)
+			}(node)
+			i++
+		} else {
+			idx++
+		}
 	}
 
 	go func() {
