@@ -141,6 +141,10 @@ func (h *HashRingManager) AddNode(node string) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 
+	if _, exists := h.activeNodes[node]; exists {
+		return
+	}
+
 	h.activeNodes[node] = struct{}{}
 
 	for vn := 0; vn < VirtualNodesFactor; vn++ {
