@@ -96,14 +96,11 @@ func (h *HashRingManager) GetRingIndex(hash uint32) (int, error) {
 		return h.ring[i] >= hash
 	})
 
-	if i < len(h.ring) {
-		if i == len(h.ring)-1 && h.ring[i] < hash {
-			return 0, nil
-		}
-		return i, nil
-	} else {
-		return 0, fmt.Errorf("hash is out of range")
+	if i == len(h.ring) {
+		return 0, nil
 	}
+
+	return i, nil
 }
 
 /*
