@@ -17,11 +17,16 @@ const (
 	ReplicationHeader = "X-Replication"
 )
 
+type HttpClient interface {
+	Do(req *http.Request) (*http.Response, error)
+	Get(url string) (*http.Response, error)
+}
+
 type Store struct {
 	mu                sync.RWMutex
 	data              map[string]string
 	nodes             []string
-	client            *http.Client
+	client            HttpClient
 	ringManager       *hashring.HashRingManager
 	replicationFactor int
 	readQuorum        int

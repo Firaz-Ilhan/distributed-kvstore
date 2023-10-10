@@ -1,8 +1,26 @@
 package store
 
 import (
+	"bytes"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 )
+
+type MockHttpClient struct {
+	doFunc  func(req *http.Request) (*http.Response, error)
+	getFunc func(url string) (*http.Response, error)
+}
+
+func (m *MockHttpClient) Do(req *http.Request) (*http.Response, error) {
+	return m.doFunc(req)
+}
+
+func (m *MockHttpClient) Get(url string) (*http.Response, error) {
+	return m.getFunc(url)
+}
 
 func assertEqual(t *testing.T, got, want interface{}, msg string) {
 	t.Helper()
@@ -106,4 +124,98 @@ func TestNewStore(t *testing.T) {
 	if s.ringManager == nil {
 		t.Fatalf("expected ringManager to be created, got nil")
 	}
+}
+
+func TestQuorumCalculation(t *testing.T) {
+	tests := []struct {
+		nodes               []string
+		expectedReadQuorum  int
+		expectedWriteQuorum int
+	}{
+		{
+			nodes:               []string{"node1"},
+			expectedReadQuorum:  1,
+			expectedWriteQuorum: 1,
+		},
+		{
+			nodes:               []string{"node1", "node2"},
+			expectedReadQuorum:  2,
+			expectedWriteQuorum: 2,
+		},
+		{
+			nodes:               []string{"node1", "node2", "node3"},
+			expectedReadQuorum:  2,
+			expectedWriteQuorum: 2,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(fmt.Sprintf("nodes: %v", test.nodes), func(t *testing.T) {
+			s := NewStore(test.nodes, 1)
+			if s.readQuorum != test.expectedReadQuorum {
+				t.Errorf("expected readQuorum to be %d, got %d", test.expectedReadQuorum, s.readQuorum)
+			}
+			if s.writeQuorum != test.expectedWriteQuorum {
+				t.Errorf("expected writeQuorum to be %d, got %d", test.expectedWriteQuorum, s.writeQuorum)
+			}
+		})
+	}
+}
+
+func TestReplicate(t *testing.T) {
+	t.Run("should replicate data to nodes successfully", func(t *testing.T) {
+		nodes := []string{"node1", "node2"}
+		s := NewStore(nodes, 2)
+
+		s.client = &MockHttpClient{
+			doFunc: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(bytes.NewReader([]byte{})),
+				}, nil
+			},
+		}
+
+		err := s.replicate("PUT", "key", "value")
+		if err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+	})
+
+	t.Run("should return error when replication fails", func(t *testing.T) {
+		nodes := []string{"node1", "node2"}
+		s := NewStore(nodes, 1)
+
+		s.client = &MockHttpClient{
+			doFunc: func(req *http.Request) (*http.Response, error) {
+				return nil, fmt.Errorf("network error")
+			},
+		}
+
+		err := s.replicate("PUT", "key", "value")
+		if err == nil || !strings.Contains(err.Error(), "not enough replicas for write quorum") {
+			t.Errorf("expected a 'not enough replicas for write quorum' error, got %v", err)
+		}
+	})
+}
+
+func TestHandleReplication(t *testing.T) {
+	t.Run("should attempt replication when skipReplication is false", func(t *testing.T) {
+		nodes := []string{"node1", "node2", "node3", "node4"}
+		s := NewStore(nodes, 3)
+
+		s.client = &MockHttpClient{
+			doFunc: func(req *http.Request) (*http.Response, error) {
+				return nil, fmt.Errorf("this error should be triggered")
+			},
+		}
+
+		err := s.handleReplication(false, "PUT", "key", "value")
+		if err == nil {
+			t.Errorf("expected an error but got nil")
+		} else if !strings.Contains(err.Error(), "this error should be triggered") &&
+			!strings.Contains(err.Error(), "not enough replicas for write quorum") {
+			t.Errorf("unexpected error, got %v", err)
+		}
+	})
 }
