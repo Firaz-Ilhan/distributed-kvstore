@@ -38,6 +38,11 @@ Sends a health check request to a specified node.
 func (s *Store) checkNode(node string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	if node == "" {
+		log.Printf("no node specified, skipping health check")
+		return
+	}
+
 	resp, err := s.client.Get(fmt.Sprintf("http://%s/health", node))
 	if err != nil || resp.StatusCode != 200 {
 		s.ringManager.RemoveNode(node)
